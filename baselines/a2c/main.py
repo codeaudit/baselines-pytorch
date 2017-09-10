@@ -9,8 +9,8 @@ import torch.backends.cudnn as cudnn
 
 from DL_Logger.ResultsLog import setup_results_and_logging
 
+from baselines.a2c import policies, a2c
 
-from baselines.a2c import policies, a2c_torch
 
 def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -78,12 +78,6 @@ def main():
     else:
         args.gpus = None
 
-    # if
-    #     from gym import envs
-    #     envids = [spec.id for spec in envs.registry.all()]
-    #     for envid in sorted(envids):
-    #         print(envid)
-
     if args.seed == 0:
         args.seed = random.randint(0, 2**32 - 1)
 
@@ -99,7 +93,7 @@ def main():
     # setup logging
     results, save_path = setup_results_and_logging(args)
 
-    agent = a2c_torch.A2CActor(results, save_path, cuda)
+    agent = a2c.A2CActor(results, save_path, cuda)
     agent.train(
         env_id=args.env_id,
         num_workers=args.num_workers,
