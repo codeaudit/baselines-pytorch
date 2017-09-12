@@ -4,11 +4,11 @@ import random
 import numpy as np
 import argparse
 import torch
+import torch.multiprocessing as mp
 import torch.optim as optim
 import torch.backends.cudnn as cudnn
 
 from DL_Logger.ResultsLog import setup_results_and_logging
-
 from baselines.a3c import policies, a3c
 
 
@@ -91,14 +91,17 @@ def main():
     else:
         ValueError('invalid optimizer type')
 
+    torch.set_num_threads(mp.cpu_count()-1)
     # setup logging
     results, save_path = setup_results_and_logging(args)
 
-    agent = a3c.A3CActor(results, save_path, cuda)
-    agent.train(
+    # agent = a3c.A3CActor(results, save_path, cuda)
+    a3c.train(
         env_id=args.env_id,
-        num_workers=args.num_workers,
         seed=args.seed,
+        policy=policies.mlp,
+        policy_args={'hiddens': [32]},
+        num_workers=args.num_workers,
         max_timesteps=int(1e6*(args.million_frames)),
         gamma=args.gamma,
         ent_coef=args.ent_coef,
@@ -110,6 +113,10 @@ def main():
         log_kl=True,
         optimizer=optimizer,
         optimizer_params=optimizer_params,
+        cuda=cuda,
+        save_path=save_path,
+        results=results,
+        epsilon_greedy=False,
     )
     # print("Saving model to mountaincar_model.pkl")
     # agent.save("mountaincar_model.pkl")

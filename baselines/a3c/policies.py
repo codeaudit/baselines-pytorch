@@ -211,6 +211,9 @@ class Mlp(nn.Module):
         value = self.value_layer(x)
         return action_prob, value
 
+    def sync_parameters(self, shared_net):
+        self.load_state_dict(shared_net.state_dict())
+
 
 def mlp(input_dim, num_actions, hiddens, *args, **kwargs):
     """This model takes as input an observation and returns values of all actions.

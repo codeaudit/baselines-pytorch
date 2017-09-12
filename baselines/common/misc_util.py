@@ -67,14 +67,15 @@ class EzPickle(object):
         self.__dict__.update(out.__dict__)
 
 
-def set_global_seeds(i):
+def set_global_seeds(i, cuda=False):
     try:
         import torch
     except ImportError:
         pass
     else:
-        torch.manual_seed(i)
-        if torch.cuda.is_available():
+        # TODO: uncomment once the bug is fixed: https://github.com/pytorch/pytorch/issues/2517
+        # torch.manual_seed(i)
+        if cuda:
             torch.cuda.manual_seed_all(i)
     np.random.seed(i)
     random.seed(i)
