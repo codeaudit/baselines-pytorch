@@ -9,14 +9,14 @@ import torch.backends.cudnn as cudnn
 
 from DL_Logger.ResultsLog import setup_results_and_logging
 
-from baselines.a2c import policies, a2c
+from baselines.a3c import policies, a3c
 
 
 def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter,
                                      description='A2C MountainCar training')
 
-    parser.add_argument('--tensor_type', default='torch.cuda.FloatTensor',
+    parser.add_argument('--tensor_type', default='torch.FloatTensor',
                         help='type of tensor - e.g torch.cuda.HalfTensor')
     parser.add_argument('--gpus', default='0',
                         help='gpus used for training - e.g 0,1,3')
@@ -64,7 +64,7 @@ def main():
                                 help='results dir')
     logging_parser.add_argument('--save_name', default='',
                                 help='saved folder')
-    logging_parser.add_argument('--log_interval', help='frequency of logging in timesteps',
+    logging_parser.add_argument('--log_interval', help='frequency of logging in epochs',
                                 type=int, default=1000)
 
     args = parser.parse_args()
@@ -94,7 +94,7 @@ def main():
     # setup logging
     results, save_path = setup_results_and_logging(args)
 
-    agent = a2c.A2CActor(results, save_path, cuda)
+    agent = a3c.A3CActor(results, save_path, cuda)
     agent.train(
         env_id=args.env_id,
         num_workers=args.num_workers,
@@ -104,12 +104,14 @@ def main():
         ent_coef=args.ent_coef,
         value_coef=args.vf_coef,
         num_steps_update=args.num_steps_update,
+        max_episode_len=100000,
         max_grad_norm=args.max_grad_norm,
         log_interval=args.log_interval,
+        log_kl=True,
         optimizer=optimizer,
         optimizer_params=optimizer_params,
     )
-    print("Saving model to mountaincar_model.pkl")
+    # print("Saving model to mountaincar_model.pkl")
     # agent.save("mountaincar_model.pkl")
 
 
