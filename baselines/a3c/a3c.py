@@ -252,9 +252,10 @@ class A3CActor:
 
         env.close()
 
-    def save(self):
-        # TODO: implemented
-        pass
+    @staticmethod
+    def save(state, path, filename):
+        filename = os.path.join(path, filename)
+        torch.save(state, filename)
 
     def load(self):
         # TODO: implemented
