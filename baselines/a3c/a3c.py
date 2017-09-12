@@ -249,6 +249,12 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
             policy_loss -= advantage*log_probs[i]
             entropy_loss += entropies[i]
 
+            # normalize by batch length for stabilization
+            update_length = len(rewards)
+            value_loss =  value_loss / update_length
+            policy_loss = policy_loss / update_length
+            entropy_loss = entropy_loss / update_length
+
         if log_kl:
             old_model.load_state_dict(model.state_dict())
 
