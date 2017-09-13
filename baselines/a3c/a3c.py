@@ -16,7 +16,7 @@ from baselines.common import set_global_seeds
 from baselines.a2c.policies import mlp
 from baselines import bench
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
-from baselines.common.atari_wrappers import wrap_deepmind
+from baselines.common.atari_wrappers import wrap_deepmind, FrameStack
 from baselines.common.classic_control_wrappers import NumpyWrapper, MountainCarNumpyWrapper
 from DL_Logger.utils import AverageMeter
 
@@ -63,6 +63,7 @@ class A3CActor:
             env = MountainCarNumpyWrapper(env)
         elif 'NoFrameskip' in env.spec.id:
             env = wrap_deepmind(env)
+            env = FrameStack(env, 4)
         return env
 
 
@@ -117,7 +118,8 @@ def train(env_id, seed, policy, policy_args, num_workers, max_timesteps, gamma, 
         path to save files
     """
     env = A3CActor.create_env(env_id, seed, 0, save_path)
-    policy_args['input_dim'] = [env.observation_space.shape[0]]
+    policy_args['input_dim'] = list(env.observation_space.shape)
+    policy_args['input_dim'] = [policy_args['input_dim'][-1]] + policy_args['input_dim'][:-1]
     policy_args['num_actions'] = env.action_space.n
     del env
     shared_model = policy(**policy_args)
@@ -153,7 +155,7 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
         model.cuda()
 
     if log_kl:
-        old_model = mlp([env.observation_space.shape[0]], env.action_space.n, [32])
+        old_model = policy(**policy_args)
         if cuda:
             old_model.cuda()
         old_model.load_state_dict(model.state_dict())
@@ -163,12 +165,12 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
 
     episode_len, episode_total_reward, epoch = 0, 0, 0
     next_state = env.reset()
-    next_state = torch.from_numpy(next_state)
+    # VALIDATE: change to double?
+    next_state = torch.from_numpy(next_state).float()
     if cuda:
         next_state = next_state.cuda()
 
     last_save_step = 0
-    # TODO: sync T
     T = 0
     avg_total_reward, avg_value_estimate, avg_value_loss, \
     avg_policy_loss, avg_entropy_loss, avg_kl_div = \
@@ -195,22 +197,23 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
             avg_value_estimate.update(value.data.mean())
 
             action_log_probs = torch.log(action_prob)
-            entropy = -(action_log_probs * action_prob).sum(1)
+            entropy = -(action_log_probs * action_prob).sum()
 
             if log_kl:
                 action_prob_old, _ = old_model(Variable(next_state))
                 kl_div = (action_prob_old * torch.log(action_prob_old / action_prob)).sum()
                 avg_kl_div.update(kl_div.data[0])
 
-            # if epsilon_greedy:
-            #     rand_numbers = torch.rand(num_workers)
-            #     action_mask = rand_numbers.le(epsilon*torch.ones(rand_numbers.size()))
-            #
-            #     random_actions = torch.multinomial(torch.ones(env.action_space.n), num_workers, replacement=True)
-            #     action[action_mask] = random_actions[action_mask]
+            if epsilon_greedy:
+                rand_numbers = torch.rand()
+                action_mask = rand_numbers.le(epsilon*torch.ones(rand_numbers.size()))
+
+                random_actions = torch.multinomial(torch.ones(env.action_space.n), 0, replacement=True)
+                action[action_mask] = random_actions[action_mask]
+
             next_state, reward, terminal, info = env.step(action.cpu().numpy()[0])
             # env.render()
-            next_state = torch.from_numpy(next_state)
+            next_state = torch.from_numpy(next_state).float()
             if cuda:
                 next_state = next_state.cuda()
 
@@ -221,17 +224,17 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
             rewards.append(reward)
             values.append(value)
             entropies.append(entropy)
-            log_probs.append(action_log_probs.gather(1, Variable(action)))
+            log_probs.append(action_log_probs.gather(0, Variable(action)))
 
             T += 1
             if terminal or episode_len > max_episode_len:
                 next_state = env.reset()
-                next_state = torch.from_numpy(next_state)
+                next_state = torch.from_numpy(next_state).float()
                 avg_total_reward.update(episode_total_reward)
                 break
 
         if terminal:
-            R = torch.zeros(1, 1)
+            R = torch.zeros(1)
         else:
             # bootstrap for last state
             _, value = model(Variable(next_state))
@@ -242,7 +245,7 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
 
         value_loss, policy_loss, entropy_loss = 0, 0, 0
         for i in reversed(range(len(rewards))):
-            R = rewards[i] + gamma*R
+            R = gamma*R + rewards[i]
             advantage = R - values[i]
 
             value_loss += advantage.pow(2)
@@ -251,7 +254,7 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
 
             # normalize by batch length for stabilization
             update_length = len(rewards)
-            value_loss =  value_loss / update_length
+            value_loss = value_loss / update_length
             policy_loss = policy_loss / update_length
             entropy_loss = entropy_loss / update_length
 
@@ -259,10 +262,12 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
             old_model.load_state_dict(model.state_dict())
 
         optimizer.zero_grad()
+        # print('value_loss = {:.2f}, policy_loss = {:.2f}, entropy_loss = {:.2f}'.format(
+        #     value_loss.data[0], policy_loss.data[0], entropy_loss.data[0]))
         (policy_loss + value_coef*value_loss + ent_coef*entropy_loss).backward()
         avg_entropy_loss.update(entropy_loss.data[0])
-        avg_value_loss.update(value_loss.data[0][0])
-        avg_policy_loss.update(policy_loss.data[0][0])
+        avg_value_loss.update(value_loss.data[0])
+        avg_policy_loss.update(policy_loss.data[0])
 
         torch.nn.utils.clip_grad_norm(model.parameters(), max_grad_norm)
         ensure_shared_grads(model, shared_model)
@@ -291,8 +296,9 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
                          title='avg_value_loss', ylabel='avg_value_loss')
             results.plot(x='step', y='avg_entropy_loss',
                          title='avg_entropy_loss', ylabel='avg_entropy_loss')
-            results.plot(x='step', y='kl_div',
-                         title='average_kl_divergence', ylabel='kl_div')
+            if log_kl:
+                results.plot(x='step', y='kl_div',
+                             title='average_kl_divergence', ylabel='kl_div')
             results.save()
 
             avg_total_reward.reset()

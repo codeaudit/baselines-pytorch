@@ -38,14 +38,14 @@ def main():
                         type=float, default=0.01)
     parser.add_argument('--num_steps_update', help='Number of steps to take before updating the network',
                         type=int, default=5)
-    parser.add_argument('--max_grad_norm', help='maximum size of the gradient',
-                        type=float, default=0.5)
 
     optim_parser = parser.add_argument_group('Optimization Parameters')
     optim_parser.add_argument('--optimizer', default='rmsprop', choices=['rmsprop', 'adam'],
                               help='optimizer for training')
     optim_parser.add_argument('--lr', type=float, default=7e-4,
                               help='learning rate')
+    optim_parser.add_argument('--max_grad_norm', help='maximum size of the gradient',
+                        type=float, default=0.5)
     optim_parser.add_argument('--alpha', type=float, default=0.99,
                               help='smoothing constant (RMSProp')
     optim_parser.add_argument('--beta1', type=float, default=0.9,
@@ -95,12 +95,20 @@ def main():
     # setup logging
     results, save_path = setup_results_and_logging(args)
 
+    if args.env_id == 'CartPole-v0':
+        policy = policies.mlp
+        policy_args = {'hiddens': [32]}
+    else:
+        policy = policies.CnnToMlp
+        policy_args = {'convs': [(16, 8, 4), (32, 4, 2)],
+                     'hiddens': [256]}
+
     # agent = a3c.A3CActor(results, save_path, cuda)
     a3c.train(
         env_id=args.env_id,
         seed=args.seed,
-        policy=policies.mlp,
-        policy_args={'hiddens': [32]},
+        policy=policy,
+        policy_args=policy_args,
         num_workers=args.num_workers,
         max_timesteps=int(1e6*(args.million_frames)),
         gamma=args.gamma,
@@ -110,7 +118,7 @@ def main():
         max_episode_len=100000,
         max_grad_norm=args.max_grad_norm,
         log_interval=args.log_interval,
-        log_kl=True,
+        log_kl=False,
         optimizer=optimizer,
         optimizer_params=optimizer_params,
         cuda=cuda,

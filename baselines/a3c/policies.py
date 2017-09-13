@@ -9,89 +9,12 @@ from operator import mul
 from baselines.a2c.utils import conv, fc, conv_to_fc, batch_to_seq, seq_to_batch, lstm, lnlstm, sample, check_shape
 from baselines.common.distributions import make_pdtype
 import baselines.common.tf_util as U
-#
-# class LnLstmPolicy(object):
-#     def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack, nlstm=256, reuse=False):
-#         nbatch = nenv*nsteps
-#         nh, nw, nc = ob_space.shape
-#         ob_shape = (nbatch, nh, nw, nc*nstack)
-#         nact = ac_space.n
-#         X = tf.placeholder(tf.uint8, ob_shape) #obs
-#         M = tf.placeholder(tf.float32, [nbatch]) #mask (done t-1)
-#         S = tf.placeholder(tf.float32, [nenv, nlstm*2]) #states
-#         with tf.variable_scope("model", reuse=reuse):
-#             h = conv(tf.cast(X, tf.float32)/255., 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
-#             h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
-#             h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
-#             h3 = conv_to_fc(h3)
-#             h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
-#             xs = batch_to_seq(h4, nenv, nsteps)
-#             ms = batch_to_seq(M, nenv, nsteps)
-#             h5, snew = lnlstm(xs, ms, S, 'lstm1', nh=nlstm)
-#             h5 = seq_to_batch(h5)
-#             pi = fc(h5, 'pi', nact, act=lambda x:x)
-#             vf = fc(h5, 'v', 1, act=lambda x:x)
-#
-#         v0 = vf[:, 0]
-#         a0 = sample(pi)
-#         self.initial_state = np.zeros((nenv, nlstm*2), dtype=np.float32)
-#
-#         def step(ob, state, mask):
-#             a, v, s = sess.run([a0, v0, snew], {X:ob, S:state, M:mask})
-#             return a, v, s
-#
-#         def value(ob, state, mask):
-#             return sess.run(v0, {X:ob, S:state, M:mask})
-#
-#         self.X = X
-#         self.M = M
-#         self.S = S
-#         self.pi = pi
-#         self.vf = vf
-#         self.step = step
-#         self.value = value
-#
-# class LstmPolicy(object):
-#
-#     def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack, nlstm=256, reuse=False):
-#         nbatch = nenv*nsteps
-#         nh, nw, nc = ob_space.shape
-#         ob_shape = (nbatch, nh, nw, nc*nstack)
-#         nact = ac_space.n
-#         X = tf.placeholder(tf.uint8, ob_shape) #obs
-#         M = tf.placeholder(tf.float32, [nbatch]) #mask (done t-1)
-#         S = tf.placeholder(tf.float32, [nenv, nlstm*2]) #states
-#         with tf.variable_scope("model", reuse=reuse):
-#             h = conv(tf.cast(X, tf.float32)/255., 'c1', nf=32, rf=8, stride=4, init_scale=np.sqrt(2))
-#             h2 = conv(h, 'c2', nf=64, rf=4, stride=2, init_scale=np.sqrt(2))
-#             h3 = conv(h2, 'c3', nf=64, rf=3, stride=1, init_scale=np.sqrt(2))
-#             h3 = conv_to_fc(h3)
-#             h4 = fc(h3, 'fc1', nh=512, init_scale=np.sqrt(2))
-#             xs = batch_to_seq(h4, nenv, nsteps)
-#             ms = batch_to_seq(M, nenv, nsteps)
-#             h5, snew = lstm(xs, ms, S, 'lstm1', nh=nlstm)
-#             h5 = seq_to_batch(h5)
-#             pi = fc(h5, 'pi', nact, act=lambda x:x)
-#             vf = fc(h5, 'v', 1, act=lambda x:x)
-#
-#         v0 = vf[:, 0]
-#         a0 = sample(pi)
-#         self.initial_state = np.zeros((nenv, nlstm*2), dtype=np.float32)
-#
-#         def step(ob, state, mask):
-#             a, v, s = sess.run([a0, v0, snew], {X:ob, S:state, M:mask})
-#             return a, v, s
-#
-#         def value(ob, state, mask):
-#             return sess.run(v0, {X:ob, S:state, M:mask})
-#
-#         self.X = X
-#         self.M = M
-#         self.S = S
-#         self.pi = pi
-#         self.vf = vf
-#         self.step = step
-#         self.value = value
+
+
+def init_layers(linear_layers):
+    for l in linear_layers:
+        nn.init.orthogonal(l.weight.data, np.sqrt(2))
+        l.bias.data.fill_(0.0)
 
 
 class CnnToMlp(nn.Module):
@@ -115,34 +38,57 @@ class CnnToMlp(nn.Module):
             in_channels = out_channels
 
         fc_layers = []
-        conv_flat_size = CnnToMlp.get_flat_features(input_dim, self.features)
-        sizes = [conv_flat_size] + hiddens + [num_actions]
+        conv_flat_size = CnnToMlp._get_conv_output(input_dim, conv_layers)
+        sizes = [conv_flat_size] + hiddens
         for i in range(len(hiddens) - 1):
             fc_layers += [nn.Linear(sizes[i], sizes[i + 1]), nn.ReLU(inplace=True)]
         self.features = nn.Sequential(*(conv_layers + fc_layers))
         self.softmax = nn.Softmax()
-        self.value_layer = nn.Linear(sizes[-1], 1, nn.ReLU(inplace=True))
+        self.value_layer = nn.Linear(conv_flat_size, 1)
+        self.policy_layer = nn.Linear(conv_flat_size, num_actions)
+
 
         self.num_actions = num_actions
 
         self._init_layers()
 
-        def _init_layers(self):
-            #     TODO: implement
-            pass
+    def _init_layers(self):
+        # parameterised_layers = [self.value_layer, self.policy_layer]
+        # parameterised_layers = []
+        # for l in self.features.modules():
+        #     if isinstance(l, nn.Linear) or isinstance(l, nn.Conv2d):
+        #         parameterised_layers.append(l)
+        # init_layers(parameterised_layers)
+        #
+        # nn.init.orthogonal(self.policy_layer.weight.data, 1)
+        # self.policy_layer.bias.data.fill_(0)
+        # nn.init.orthogonal(self.value_layer.weight.data, 1)
+        # self.value_layer.bias.data.fill_(0)
+        pass
 
-        def forward(self, x):
-            x = self.features(x)
-            action_prob = self.softmax(x)
-            # TODO: Check the size below
-            value = self.value_layer(x)
-            return action_prob, value
+    def forward(self, x):
+        dims = x.size()
+        x = x.view(1, dims[2], dims[0], dims[1])
+        x = self.features(x)
+        x = x.view(1, -1)
+        action_logit = self.policy_layer(x)
+        # print('logits:')
+        # print(action_logit)
+        action_prob = self.softmax(action_logit)
+        value = self.value_layer(x)
+        return action_prob.squeeze(), value.squeeze()
 
     @staticmethod
-    def get_flat_features(in_size, features):
-        # print('in_size = {}, features_size = {}'.format(in_size, features.size()))
-        f = features(Variable(torch.ones(1, *in_size)))
-        return int(np.prod(f.size()[1:]))
+    def _get_conv_output(shape, conv_layers):
+        bs = 1
+        input = Variable(torch.rand(bs, *shape))
+        conv_layers = nn.Sequential(*conv_layers)
+        output_feat = conv_layers(input)
+        n_size = output_feat.data.view(bs, -1).size(1)
+        return n_size
+
+    def sync_parameters(self, shared_net):
+        self.load_state_dict(shared_net.state_dict())
 
 
 def cnn_to_mlp(input_dim, num_actions, convs, hiddens, *args, **kwargs):
@@ -189,27 +135,31 @@ class Mlp(nn.Module):
         self.net = nn.Sequential(*layers)
         self.policy_layer = nn.Linear(sizes[-1], num_actions)
         self.softmax = nn.Softmax()
-        self.value_layer = nn.Linear(sizes[-1], 1, nn.ReLU(inplace=True))
+        self.value_layer = nn.Linear(sizes[-1], 1)
 
         self._init_layers()
 
     def _init_layers(self):
-        linear_layers = [self.value_layer, self.policy_layer]
+        parameterised_layers = [self.value_layer, self.policy_layer]
         for l in self.net.modules():
             if isinstance(l, nn.Linear):
-                linear_layers.append(l)
+                parameterised_layers.append(l)
+        init_layers(parameterised_layers)
 
-        for l in linear_layers:
-            nn.init.orthogonal(l.weight.data, np.sqrt(2))
+        nn.init.orthogonal(self.policy_layer.weight.data, 1)
+        self.policy_layer.bias.data.fill_(0)
+        nn.init.orthogonal(self.value_layer.weight.data, 1)
+        self.value_layer.bias.data.fill_(0)
 
     def forward(self, x):
-        x = x.view(-1, self.input_flat_size)
+        # x = x.view(-1, self.input_flat_size)
         x = self.net(x)
 
         policy_logit = self.policy_layer(x)
+        policy_logit = policy_logit.unsqueeze(0)
         action_prob = self.softmax(policy_logit)
         value = self.value_layer(x)
-        return action_prob, value
+        return action_prob.squeeze(0), value
 
     def sync_parameters(self, shared_net):
         self.load_state_dict(shared_net.state_dict())
