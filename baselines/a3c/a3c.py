@@ -126,21 +126,29 @@ def train(env_id, seed, policy, policy_args, num_workers, max_timesteps, gamma, 
     shared_model.share_memory()
     set_global_seeds(seed, cuda)
 
-    processes = []
-    for rank in range(num_workers):
-        p_results = None
-        if rank == 0:
-            p_results = results
-        p = mp.Process(target=_train,
-                       args=(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
-                             gamma, ent_coef, value_coef, num_steps_update,
-                             max_episode_len, max_grad_norm, log_interval,
-                             log_kl, optimizer, optimizer_params,
-                             cuda, save_path, p_results, epsilon_greedy))
-        p.start()
-        processes.append(p)
-    for p in processes:
-      p.join()
+    single_process = False
+    if single_process:
+        _train(shared_model, 0, env_id, seed, policy, policy_args, max_timesteps,
+                gamma, ent_coef, value_coef, num_steps_update,
+                max_episode_len, max_grad_norm, log_interval,
+                log_kl, optimizer, optimizer_params,
+                cuda, save_path, results, epsilon_greedy)
+    else:
+        processes = []
+        for rank in range(num_workers):
+            p_results = None
+            if rank == 0:
+                p_results = results
+            p = mp.Process(target=_train,
+                           args=(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
+                                 gamma, ent_coef, value_coef, num_steps_update,
+                                 max_episode_len, max_grad_norm, log_interval,
+                                 log_kl, optimizer, optimizer_params,
+                                 cuda, save_path, p_results, epsilon_greedy))
+            p.start()
+            processes.append(p)
+        for p in processes:
+          p.join()
 
 
 def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps, gamma, ent_coef, value_coef,
