@@ -1,7 +1,9 @@
 import os
 import random
 import argparse
+import datetime
 
+from DL_Logger.ResultsLog import export_args, setup_logging, ResultsLog
 import torch
 import torch.multiprocessing as mp
 import torch.optim as optim
@@ -26,6 +28,8 @@ def main():
                         type=int, default=4)
     parser.add_argument('--architecture', help='Policy architecture',
                         choices=['cnn', 'lstm', 'lnlstm'], default='cnn')
+    parser.add_argument('--resume', help='Whether training is resumed',
+                        dest='resume', action='store_true')
 
     parser.add_argument('--million_frames', help='How many frames to train (/ 1e6). '
                                                  'This number gets divided by 4 due to frameskip', type=float, default=40)
@@ -68,31 +72,25 @@ def main():
 
     args = parser.parse_args()
 
-    if 'cuda' in args.tensor_type:
-        args.gpus = [int(i) for i in args.gpus.split(',')]
-        # torch.cuda.set_device(args.gpus[0])
-        torch.cuda.device(args.gpus[0])
-        cudnn.benchmark = True
-        cuda = True
-    else:
-        cuda = False
-        args.gpus = None
+    cuda = handle_cuda(args)
 
     if args.seed == 0:
         args.seed = random.randint(0, 2**32 - 1)
 
-    if args.optimizer == 'rmsprop':
-        optimizer=optim.RMSprop
-        optimizer_params = {'lr': args.lr, 'alpha': args.alpha, 'eps': args.eps}
-    elif args.optimizer == 'adam':
-        optimizer = optim.Adam
-        optimizer_params = {'lr': args.lr, 'betas': (args.beta1, args.beta2), 'eps': args.eps}
-    else:
-        ValueError('invalid optimizer type')
+    optimizer, optimizer_params = prepare_optimization_params(args)
 
     torch.set_num_threads(mp.cpu_count()-1)
     # setup logging
-    results, save_path = setup_results_and_logging(args)
+    if args.save_name is '':
+        args.save_name = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    save_path = os.path.join(args.results_dir, args.save_name)
+
+    setup_logging(os.path.join(save_path, 'log.txt'))
+    results = ResultsLog(path=save_path, plot_title=args.save_name, resume=False)
+    export_args(args, save_path)
+
+    results_args = {'path': save_path, 'plot_title': args.save_name,
+                    'results_file_name': 'results', 'resume': args.resume}
 
     if args.env_id == 'CartPole-v0':
         policy = policies.mlp
@@ -124,11 +122,36 @@ def main():
         optimizer_params=optimizer_params,
         cuda=cuda,
         save_path=save_path,
-        results=results,
+        results_args=results_args,
         epsilon_greedy=False,
     )
     # print("Saving model to mountaincar_model.pkl")
     # agent.save("mountaincar_model.pkl")
+
+
+def prepare_optimization_params(args):
+    if args.optimizer == 'rmsprop':
+        optimizer = optim.RMSprop
+        optimizer_params = {'lr': args.lr, 'alpha': args.alpha, 'eps': args.eps}
+    elif args.optimizer == 'adam':
+        optimizer = optim.Adam
+        optimizer_params = {'lr': args.lr, 'betas': (args.beta1, args.beta2), 'eps': args.eps}
+    else:
+        ValueError('invalid optimizer type')
+    return optimizer, optimizer_params
+
+
+def handle_cuda(args):
+    if 'cuda' in args.tensor_type:
+        args.gpus = [int(i) for i in args.gpus.split(',')]
+        # torch.cuda.set_device(args.gpus[0])
+        torch.cuda.device(args.gpus[0])
+        cudnn.benchmark = True
+        cuda = True
+    else:
+        cuda = False
+        args.gpus = None
+    return cuda
 
 
 if __name__ == '__main__':

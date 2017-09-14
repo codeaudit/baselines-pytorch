@@ -1,11 +1,9 @@
 import os
 import time
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
-import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.optim as optim
 import logging.config
@@ -13,12 +11,11 @@ import gym
 import logging
 
 from baselines.common import set_global_seeds
-from baselines.a2c.policies import mlp
-from baselines import bench
-from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.common.atari_wrappers import wrap_deepmind, FrameStack
 from baselines.common.classic_control_wrappers import NumpyWrapper, MountainCarNumpyWrapper
 from DL_Logger.utils import AverageMeter
+from DL_Logger.ResultsLog import ResultsLog
+from baselines.a3c.plot_process import plot_all_agents_loop
 
 
 class A3CActor:
@@ -54,8 +51,6 @@ class A3CActor:
         # divide by 4 due to frameskip, then do a little extras so episodes end
         env = gym.make(env_id)
         env.seed(seed + rank)
-        env = bench.Monitor(env, save_path and
-                            os.path.join(save_path, "{}.monitor.json".format(rank)))
 
         if env_id.startswith('CartPole') or env_id.startswith('Acrobot'):
             env = NumpyWrapper(env)
@@ -69,7 +64,7 @@ class A3CActor:
 
 def train(env_id, seed, policy, policy_args, num_workers, max_timesteps, gamma, ent_coef,
           value_coef, num_steps_update, max_episode_len, max_grad_norm, log_interval, log_kl,
-          optimizer, optimizer_params, cuda, save_path, results, epsilon_greedy):
+          optimizer, optimizer_params, cuda, save_path, results_args, epsilon_greedy):
     """Performs training of an A3C thread
     Parameters
     ----------
@@ -116,6 +111,8 @@ def train(env_id, seed, policy, policy_args, num_workers, max_timesteps, gamma, 
             term added to the denominator to improve numerical stability
     save_path: string
         path to save files
+    results_args: dict
+        arguments to be passed to ResultsLog
     """
     env = A3CActor.create_env(env_id, seed, 0, save_path)
     policy_args['input_dim'] = list(env.observation_space.shape)
@@ -129,31 +126,37 @@ def train(env_id, seed, policy, policy_args, num_workers, max_timesteps, gamma, 
     single_process = False
     if single_process:
         _train(shared_model, 0, env_id, seed, policy, policy_args, max_timesteps,
-                gamma, ent_coef, value_coef, num_steps_update,
-                max_episode_len, max_grad_norm, log_interval,
-                log_kl, optimizer, optimizer_params,
-                cuda, save_path, results, epsilon_greedy)
+               gamma, ent_coef, value_coef, num_steps_update,
+               max_episode_len, max_grad_norm, log_interval,
+               log_kl, optimizer, optimizer_params,
+               cuda, save_path, results_args, epsilon_greedy)
     else:
         processes = []
         for rank in range(num_workers):
-            p_results = None
-            if rank == 0:
-                p_results = results
             p = mp.Process(target=_train,
                            args=(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
                                  gamma, ent_coef, value_coef, num_steps_update,
                                  max_episode_len, max_grad_norm, log_interval,
                                  log_kl, optimizer, optimizer_params,
-                                 cuda, save_path, p_results, epsilon_greedy))
+                                 cuda, save_path, results_args, epsilon_greedy))
             p.start()
             processes.append(p)
+        plot_process = mp.Process(target=plot_all_agents_loop, args=(results_args['path'],
+                                                                  results_args['results_file_name'],
+                                                                  num_workers))
+        plot_process.start()
+
         for p in processes:
           p.join()
+        plot_process.terminate()
 
 
 def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps, gamma, ent_coef, value_coef,
           num_steps_update, max_episode_len, max_grad_norm, log_interval, log_kl,
-          optimizer, optimizer_params, cuda, save_path, results, epsilon_greedy=False):
+          optimizer, optimizer_params, cuda, save_path, results_args, epsilon_greedy=False):
+
+    results_args['results_file_name'] += '_{}'.format(rank)
+    results = ResultsLog(**results_args)
 
     env = A3CActor.create_env(env_id, seed, rank, save_path)
 
@@ -281,7 +284,6 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
         ensure_shared_grads(model, shared_model)
         optimizer.step()
 
-        # TODO: sync results
         # save results
         if T > (last_save_step + log_interval) and terminal and results:
             last_save_step = T
@@ -294,19 +296,19 @@ def _train(shared_model, rank, env_id, seed, policy, policy_args, max_timesteps,
                         time=time.time() - start_time,
                         kl_div=avg_kl_div.avg()
                         )
-            results.plot(x='time', y='episode_reward',
-                         title='episode_reward', ylabel='average reward')
-            results.plot(x='step', y='value',
-                         title='value', ylabel='Avg value estimate')
-            results.plot(x='step', y='avg_policy_loss',
-                         title='avg_policy_loss', ylabel='avg_policy_loss')
-            results.plot(x='step', y='avg_value_loss',
-                         title='avg_value_loss', ylabel='avg_value_loss')
-            results.plot(x='step', y='avg_entropy_loss',
-                         title='avg_entropy_loss', ylabel='avg_entropy_loss')
-            if log_kl:
-                results.plot(x='step', y='kl_div',
-                             title='average_kl_divergence', ylabel='kl_div')
+            # results.plot(x='time', y='episode_reward',
+            #              title='episode_reward', ylabel='average reward')
+            # results.plot(x='step', y='value',
+            #              title='value', ylabel='Avg value estimate')
+            # results.plot(x='step', y='avg_policy_loss',
+            #              title='avg_policy_loss', ylabel='avg_policy_loss')
+            # results.plot(x='step', y='avg_value_loss',
+            #              title='avg_value_loss', ylabel='avg_value_loss')
+            # results.plot(x='step', y='avg_entropy_loss',
+            #              title='avg_entropy_loss', ylabel='avg_entropy_loss')
+            # if log_kl:
+            #     results.plot(x='step', y='kl_div',
+            #                  title='average_kl_divergence', ylabel='kl_div')
             results.save()
 
             avg_total_reward.reset()
