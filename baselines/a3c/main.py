@@ -1,9 +1,7 @@
 import os
-import sys
 import random
-
-import numpy as np
 import argparse
+
 import torch
 import torch.multiprocessing as mp
 import torch.optim as optim
@@ -102,7 +100,7 @@ def main():
     else:
         policy = policies.CnnToMlp
         policy_args = {'convs': [(16, 8, 4), (32, 4, 2)],
-                     'hiddens': [256]}
+                       'hiddens': [256]}
 
     os.environ['OMP_NUM_THREADS'] = '1'
 
